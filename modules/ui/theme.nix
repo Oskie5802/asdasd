@@ -1,24 +1,27 @@
-{ pkgs, ... }:
+{ pkgs, lib, ... }:
 
 let
-  # Definiujemy ścieżkę do Twojej tapety
-  # Nix "zamrozi" ten plik w systemie plików (w /nix/store/...)
+  # Zakładamy, że masz plik bg.png w folderze assets obok folderu modules
+  # Struktura: /twoj-projekt/assets/bg.png
+  # Dostosuj ścieżkę ../../../assets/bg.png zależnie od tego gdzie leży ten plik względem theme.nix
   wallPath = ../../assets/bg.png; 
 in
 {
-  # 1. Sprawiamy, że tapeta jest dostępna w systemie w stałym miejscu
-  # Skopiujemy ją do /usr/share/backgrounds/omnios-bg.png (dla wygody)
+  # 1. Kopiowanie tapety do systemu
   environment.etc."backgrounds/omnios-bg.png".source = wallPath;
-
-  # 2. Ustawiamy tapetę w ekranie logowania (SDDM)
-  services.displayManager.sddm = {
-    theme = "breeze"; # Można zmienić na inny, ale breeze jest standardem w KDE/SDDM
-    settings = {
-        Theme = {
-            Current = "breeze";
-            # W niektórych tematach SDDM ścieżka do tapety ustawiana jest tak:
-            Background = "/etc/backgrounds/omnios-bg.png";
-        };
-    };
+  
+  # 2. Ustawienia SDDM (Ekran logowania)
+  services.displayManager.sddm.settings = {
+      Theme = {
+          Current = "breeze";
+          # SDDM musi mieć dostęp do pliku, /etc/backgrounds jest bezpieczne
+          Background = "/etc/backgrounds/omnios-bg.png";
+      };
   };
+
+  # 3. Globalny motyw (opcjonalnie, przygotowanie pod Dark Mode)
+  environment.systemPackages = with pkgs; [
+    kdePackages.breeze
+    kdePackages.breeze-icons
+  ];
 }
