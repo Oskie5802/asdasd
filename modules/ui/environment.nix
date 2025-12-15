@@ -12,6 +12,10 @@
     # Alternatywny fix, jeśli powyższy nie zadziała (można mieć oba)
     WLR_NO_HARDWARE_CURSORS = "1";
     
+    # Cursor Theme
+    XCURSOR_THEME = "Adwaita";
+    XCURSOR_SIZE = "24";
+
     # Wymusza backend Wayland dla Qt
     QT_QPA_PLATFORM = "wayland";
   };
