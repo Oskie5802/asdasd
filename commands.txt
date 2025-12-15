@@ -5,3 +5,7 @@ nix run .#run-vm --impure
 
 MacOS:
 nix --extra-experimental-features "nix-command flakes" run . --impure
+
+
+Downloading the AI model BEFORE:
+nix-prefetch-url https://huggingface.co/mradermacher/granite-3.1-2b-instruct-GGUF/resolve/main/granite-3.1-2b-instruct.Q6_K.gguf
