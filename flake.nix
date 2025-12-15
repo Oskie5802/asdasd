@@ -7,52 +7,35 @@
       url = "github:nix-community/nixos-generators";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    flake-utils.url = "github:numtide/flake-utils";
+    naersk.url = "github:nix-community/naersk/master";
   };
 
-  outputs = { self, nixpkgs, nixos-generators, flake-utils, ... }:
-
-    flake-utils.lib.eachDefaultSystem (system: let
-      pkgs = import nixpkgs { inherit system; };
-
-      # Definicja VM tylko dla x86_64-linux
-      vmPackage = nixos-generators.nixosGenerate {
-        system = "x86_64-linux";
+  outputs = { self, nixpkgs, nixos-generators, naersk, ... }: 
+  let
+    system = "x86_64-linux";
+    pkgs = import nixpkgs { inherit system; };
+    naersk-lib = pkgs.callPackage naersk { };
+    
+  in 
+  {
+    packages.x86_64-linux = {
+      # Wirtualna Maszyna do testów
+      run-vm = nixos-generators.nixosGenerate {
+        system = system;
         format = "vm";
-        modules = [ ./configuration.nix ];
+        modules = [
+          ./configuration.nix
+        ];
       };
 
-      # Lekki skrypt działający na macOS (i innych)
-      runVmScript = pkgs.writeScriptBin "run-omnios-vm" ''
-        #!${pkgs.runtimeShell}
-
-        echo "Buduję/pobieram OmniOS VM (x86_64-linux)..."
-        # Buduje VM dla x86_64-linux (pobiera z cache'a jeśli możliwe)
-        nix build "${self.outPath}#packages.x86_64-linux.run-vm" --extra-experimental-features "nix-command flakes"
-
-        echo "Uruchamiam OmniOS VM przez QEMU (z HVF na Apple Silicon)..."
-        # Uruchamia skrypt z wyniku builda
-        ./result/bin/run-nixos-vm "$@"
-      '';
-
-    in {
-      packages = {
-        x86_64-linux.run-vm = vmPackage;
-        x86_64-linux.install-iso = nixos-generators.nixosGenerate {
-          system = "x86_64-linux";
-          format = "install-iso";
-          modules = [ ./configuration.nix ];
-        };
-
-        run-vm-cross = runVmScript;
-        default = runVmScript;
+      # Obraz ISO do instalacji
+      install-iso = nixos-generators.nixosGenerate {
+        system = system;
+        format = "install-iso";
+        modules = [
+          ./configuration.nix
+        ];
       };
-
-      apps = {
-        default = {
-          type = "app";
-          program = "${runVmScript}/bin/run-omnios-vm";
-        };
-      };
-    });
+    };
+  };
 }
