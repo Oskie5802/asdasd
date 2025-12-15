@@ -4,4 +4,4 @@ nix run .#run-vm --impure
 
 
 MacOS:
-nix --extra-experimental-features "nix-command flakes" run .#run-vm --system x86_64-linux --impure
+nix --extra-experimental-features "nix-command flakes" run . --impure
