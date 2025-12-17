@@ -98,16 +98,19 @@ let
     QScrollBar:vertical {
         border: none;
         background: transparent;
-        width: 6px;
+        width: 4px;
         margin: 0px;
     }
     QScrollBar::handle:vertical {
-        background: rgba(0, 0, 0, 0.1);
-        min-height: 30px;
-        border-radius: 3px;
+        background: #C7C7CC; /* Apple System Gray */
+        min-height: 20px;
+        border-radius: 2px;
     }
     QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
         height: 0px;
+    }
+    QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+        background: none;
     }
     """
 
@@ -160,7 +163,7 @@ let
             
             # Input
             self.input_field = QLineEdit()
-            self.input_field.setPlaceholderText("Does this spark joy?")
+            self.input_field.setPlaceholderText("Search or ask Omni...")
             self.input_field.textChanged.connect(self.on_text_changed)
             self.input_field.returnPressed.connect(self.on_entered)
             self.input_field.installEventFilter(self) # Capture keys
@@ -281,6 +284,7 @@ let
                 for p in paths:
                     if not p: continue
                     name = os.path.basename(p)
+                    if not name: name = p # Fallback if basename is empty
                     is_dir = os.path.isdir(p)
                     icon = "folder" if is_dir else "text-x-generic"
                     items.append({"name": name, "path": p, "icon": icon, "type": "file"})
@@ -294,49 +298,59 @@ let
         def refresh_list(self, query):
             self.list_widget.clear()
             
-            # 1. ASK AI ROW
+            # Prepare Items
+            # 1. AI Item (Always created but placed efficiently)
             display_text = f"Ask Omni: {query}" if query else "Ask Omni..."
             ai_item = QListWidgetItem(display_text)
             ai_item.setIcon(QIcon.fromTheme("system-search"))
             ai_item.setData(Qt.ItemDataRole.UserRole, {"type": "ai", "query": query})
-            self.list_widget.addItem(ai_item)
             
+            # 2. Apps
             query_lower = query.lower()
-            
-            # 2. FILTERED APPS
             app_matches = []
             for app in self.apps:
                 if query_lower in app['name'].lower():
                     app_matches.append(app)
             
-            # 3. FILES (Only if query present)
+            # 3. Files
             file_matches = []
             if query:
                 file_matches = self.search_files(query)
 
-            # Combine Results (max 8 items total)
-            remaining_slots = 9 
+            # --- SMART ORDERING ---
+            final_items = []
             
-            # Apps first
-            for app in app_matches[:remaining_slots]:
-                item = QListWidgetItem(app['name'])
-                if app['icon']:
-                    if os.path.isabs(app['icon']) and os.path.exists(app['icon']):
-                         item.setIcon(QIcon(app['icon']))
-                    else:
-                         item.setIcon(QIcon.fromTheme(app['icon']))
-                item.setData(Qt.ItemDataRole.UserRole, app)
-                self.list_widget.addItem(item)
-                remaining_slots -= 1
+            # If we have app matches, show them first!
+            if app_matches:
+                # Add apps
+                for app in app_matches[:9]: # Limit apps
+                    item = QListWidgetItem(app['name'])
+                    if app['icon']:
+                        if os.path.isabs(app['icon']) and os.path.exists(app['icon']):
+                             item.setIcon(QIcon(app['icon']))
+                        else:
+                             item.setIcon(QIcon.fromTheme(app['icon']))
+                    item.setData(Qt.ItemDataRole.UserRole, app)
+                    final_items.append(item)
                 
+                # Then AI
+                final_items.append(ai_item)
+            else:
+                # No apps? AI comes first
+                final_items.append(ai_item)
+            
             # Then files
+            remaining_slots = 10 - len(final_items)
             for f in file_matches[:remaining_slots]:
                  item = QListWidgetItem(f['name'])
-                 # Try to be smarter with file icons if possible, but generic fallback is fine
                  item.setIcon(QIcon.fromTheme(f['icon'])) 
                  item.setToolTip(f['path'])
                  item.setData(Qt.ItemDataRole.UserRole, f)
-                 self.list_widget.addItem(item)
+                 final_items.append(item)
+            
+            # Add to widget
+            for item in final_items:
+                self.list_widget.addItem(item)
 
             self.list_widget.setCurrentRow(0)
 
