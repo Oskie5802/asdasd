@@ -21,6 +21,7 @@ let
 
     # CONFIG
     BRAIN_URL = "http://127.0.0.1:5500/ask"
+    LOGO_PATH = "${../../assets/logo-trans.png}";
     
     # --- DESIGN SYSTEM ---
     # Aesthetic: "Ethereal Day"
@@ -77,19 +78,19 @@ let
     }
     
     QListWidget::item {
-        padding: 10px 20px;
-        margin-bottom: 4px;
+        padding: 12px 20px;
+        margin-bottom: 6px;
         border-radius: 16px;
         color: #1d1d1f;
-        font-size: 16px;
+        font-size: 18px;
         font-weight: 500;
         border: 1px solid transparent;
     }
 
     /* Selected Item (The "Active" State) */
     QListWidget::item:selected {
-        background-color: #000000; /* Bold Black Accent */
-        color: #FFFFFF;
+        background-color: rgba(0, 0, 0, 0.06); /* Subtle Light Gray Accent */
+        color: #1d1d1f;
         font-weight: 600;
         border: none;
     }
@@ -98,19 +99,19 @@ let
     QScrollBar:vertical {
         border: none;
         background: transparent;
-        width: 4px;
+        width: 8px; /* Slightly wider for better interaction */
         margin: 0px;
     }
     QScrollBar::handle:vertical {
-        background: #C7C7CC; /* Apple System Gray */
-        min-height: 20px;
-        border-radius: 2px;
+        background: rgba(0, 0, 0, 0.15); /* Soft Gray Handle */
+        min-height: 40px;
+        border-radius: 4px;
     }
     QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
         height: 0px;
     }
     QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
-        background: none;
+        background: transparent;
     }
     """
 
@@ -153,6 +154,7 @@ let
             # Frameless & Translucent
             self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Dialog)
             self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+            self.setWindowIcon(QIcon(LOGO_PATH))
             self.resize(720, 500) 
             self.center()
             
@@ -195,6 +197,8 @@ let
             self.list_widget.itemClicked.connect(self.on_entered)
             self.list_widget.setWordWrap(True) 
             self.list_widget.setFocusPolicy(Qt.FocusPolicy.NoFocus) # Keep focus on input
+            self.list_widget.verticalScrollBar().setSingleStep(20) # Smoother scroll step
+            self.list_widget.setStyleSheet("QListWidget { outline: none; }") # Extra safety
             
             frame_layout.addWidget(self.input_field)
             frame_layout.addWidget(self.divider)
@@ -234,7 +238,6 @@ let
                 if res['path'] in existing_paths: continue
                 
                 item = QListWidgetItem(res['name'])
-                item.setIcon(QIcon.fromTheme("emblem-symbolic-link")) # Use distinct icon for semantic matches
                 item.setData(Qt.ItemDataRole.UserRole, res)
                 self.list_widget.addItem(item)
                 added_count += 1
@@ -350,7 +353,6 @@ let
             # 1. AI Item (Always created but placed efficiently)
             display_text = f"Ask Omni: {query}" if query else "Ask Omni..."
             ai_item = QListWidgetItem(display_text)
-            ai_item.setIcon(QIcon.fromTheme("system-search"))
             ai_item.setData(Qt.ItemDataRole.UserRole, {"type": "ai", "query": query})
             
             # 2. Apps
@@ -437,8 +439,9 @@ let
             self.list_widget.clear()
             
             loading_item = QListWidgetItem("Thinking...")
-            loading_item.setIcon(QIcon.fromTheme("system-run"))
-            loading_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            loading_item.setFlags(loading_item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+            loading_item.setFont(QFont("Manrope", 24, QFont.Weight.Medium))
+            loading_item.setForeground(QColor(60, 60, 67, 120))
             self.list_widget.addItem(loading_item)
             
             self.input_field.setDisabled(True)
@@ -455,8 +458,13 @@ let
             self.list_widget.clear()
             
             answer_item = QListWidgetItem(answer)
-            answer_item.setIcon(QIcon.fromTheme("dialog-information"))
+            answer_item.setFlags(answer_item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+            answer_item.setFont(QFont("Manrope", 20, QFont.Weight.Medium))
             self.list_widget.addItem(answer_item)
+            
+            # Ensure the row is sized correctly for word wrap
+            idx = self.list_widget.row(answer_item)
+            self.list_widget.setCurrentRow(idx)
             
             subprocess.run(["xclip", "-selection", "clipboard"], input=answer.encode(), stderr=subprocess.DEVNULL)
 
@@ -486,7 +494,7 @@ let
     name = "omni-bar";
     desktopName = "Omni";
     exec = "${openOmniScript}/bin/open-omni";
-    icon = "system-search";
+    icon = "${../../assets/logo-trans.png}";
     categories = [ "Utility" ];
   };
 
