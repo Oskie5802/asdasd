@@ -57,31 +57,52 @@ let
     };
   };
 
-  # Styl CSS - Uproszczony (Brak cieni, brak blur)
+  # Styl CSS - Premium Glassmorphism
   waybarStyle = ''
     * {
         border: none;
         border-radius: 0;
-        font-family: "Inter", sans-serif;
+        font-family: "Manrope", "Inter", sans-serif;
         font-size: 14px;
-        min-height: 0;
     }
     window#waybar {
-        background: ${colors.barBg}; /* Solidny kolor */
-        color: ${colors.text};
-        border-bottom: 1px solid #e5e7eb;
+        background: rgba(255, 255, 255, 0.7);
+        color: #1d1d1f;
+        border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+        transition: all 0.3s ease;
     }
     #custom-omni {
-        font-weight: 900;
-        padding: 0 20px;
-        font-size: 15px;
+        font-weight: 800;
+        padding: 0 15px;
+        margin: 4px 10px;
+        background: rgba(0, 0, 0, 0.05);
+        border-radius: 10px;
+        font-size: 13px;
+    }
+    #clock {
+        font-weight: 600;
+        color: #1d1d1f;
     }
     #custom-control {
-        background: #f3f4f6;
-        border-radius: 8px;
+        background: rgba(0, 0, 0, 0.05);
+        border-radius: 10px;
+        padding: 0 12px;
+        margin: 4px 10px;
+        color: #1d1d1f;
+        font-size: 12px;
+    }
+    #taskbar button {
         padding: 0 10px;
-        margin: 6px 10px;
-        color: ${colors.text};
+        margin: 4px 2px;
+        border-radius: 8px;
+        transition: all 0.2s;
+    }
+    #taskbar button:hover {
+        background: rgba(0, 0, 0, 0.1);
+    }
+    #taskbar button.active {
+        background: rgba(0, 0, 0, 0.05);
+        border-bottom: 2px solid #3b82f6;
     }
   '';
 
@@ -158,15 +179,14 @@ EOF
     chmod +x "$USER_HOME/start-ui.sh"
     
     # Dodajemy do autostartu
-    # DISABLED UI AUTOSTART TO FIX FREEZE
-    # mkdir -p "$USER_HOME/.config/autostart"
-    # cat > "$USER_HOME/.config/autostart/ui.desktop" <<EOF
-    # [Desktop Entry]
-    # Type=Application
-    # Name=UI
-    # Exec=$USER_HOME/start-ui.sh
-    # X-KDE-AutostartScript=true
-    # EOF
+    mkdir -p "$USER_HOME/.config/autostart"
+    cat > "$USER_HOME/.config/autostart/ui.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=UI
+Exec=$USER_HOME/start-ui.sh
+X-KDE-AutostartScript=true
+EOF
     chown -R omnios:users "$USER_HOME"
   '';
 }

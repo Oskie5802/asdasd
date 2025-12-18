@@ -27,6 +27,8 @@
     libglvnd
     spice-vdagent
     kdePackages.libkscreen
+    kdePackages.kscreen
+    kdePackages.qttools # Dla qdbus (konfiguracja docka)
   ];
   
   # Włączenie czcionek (ważne, żeby Hyprland miał ikony)
