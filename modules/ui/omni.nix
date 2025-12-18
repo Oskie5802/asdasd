@@ -17,6 +17,8 @@ let
     from PyQt6.QtCore import Qt, QSize, QThread, pyqtSignal, QPropertyAnimation, QEasingCurve, QPoint, QRect, QEvent
     from PyQt6.QtGui import QColor, QFont, QIcon
     import traceback
+    import json
+    import re
 
 
     # CONFIG
@@ -457,16 +459,66 @@ let
             self.input_field.setFocus()
             self.list_widget.clear()
             
-            answer_item = QListWidgetItem(answer)
-            answer_item.setFlags(answer_item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
-            answer_item.setFont(QFont("Manrope", 20, QFont.Weight.Medium))
-            self.list_widget.addItem(answer_item)
+            # --- ACTION PARSING ---
+            display_text = answer
+            action_data = None
             
-            # Ensure the row is sized correctly for word wrap
-            idx = self.list_widget.row(answer_item)
-            self.list_widget.setCurrentRow(idx)
+            try:
+                # 1. Try to find JSON in code blocks
+                if "```json" in answer:
+                    parts = answer.split("```json")
+                    display_text = parts[0].strip()
+                    json_str = parts[1].split("```")[0].strip()
+                    action_data = json.loads(json_str)
+                else:
+                    # 2. Try to find any {...} block using regex
+                    match = re.search(r'(\{.*\})', answer, re.DOTALL)
+                    if match:
+                        json_str = match.group(1)
+                        action_data = json.loads(json_str)
+                        # If the whole answer was just JSON, give a default feedback
+                        if answer.strip() == json_str:
+                            display_text = "Executing action..."
+                        else:
+                            # Strip the JSON part from the display text
+                            display_text = answer.replace(json_str, "").strip()
+            except Exception as e:
+                # For debugging: display_text = f"JSON Error: {e}\n{answer}"
+                pass
             
-            subprocess.run(["xclip", "-selection", "clipboard"], input=answer.encode(), stderr=subprocess.DEVNULL)
+            if display_text:
+                answer_item = QListWidgetItem(display_text)
+                answer_item.setFlags(answer_item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+                answer_item.setFont(QFont("Manrope", 20, QFont.Weight.Medium))
+                self.list_widget.addItem(answer_item)
+                
+                # Ensure the row is sized correctly for word wrap
+                idx = self.list_widget.row(answer_item)
+                self.list_widget.setCurrentRow(idx)
+                
+                subprocess.run(["xclip", "-selection", "clipboard"], input=display_text.encode(), stderr=subprocess.DEVNULL)
+
+            # --- ACTION EXECUTION ---
+            if action_data:
+                action = action_data.get("action")
+                if action == "browse":
+                    url = action_data.get("url")
+                    if url:
+                        subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        self.close()
+                elif action == "launch" or action == "open":
+                    name = action_data.get("name") or action_data.get("path")
+                    if name:
+                        # Try to find app in our list first
+                        found = False
+                        for app in self.apps:
+                            if name.lower() in app['name'].lower():
+                                subprocess.Popen(["dex", app['path']], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                found = True
+                                break
+                        if not found:
+                             subprocess.Popen(["xdg-open", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        self.close()
 
         def keyPressEvent(self, event):
             if event.key() == Qt.Key.Key_Escape:

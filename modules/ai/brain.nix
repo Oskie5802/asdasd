@@ -126,18 +126,26 @@ def ask():
     # Qwen 2.5 uses ChatML format
     prompt = (
         f"<|im_start|>system\nYou are Omni, a helpful personal OS assistant. "
-        f"You have access to the user's personal files via the Context provided below. "
+        f"You have access to the user's personal files via the Context provided below.\n\n"
+        f"**ACTION CAPABILITIES:**\n"
+        f"If the user wants you to do something on the system (like opening a browser, searching the web, or launching an app), you MUST include a JSON block at the end of your response like this:\n"
+        f"```json\n"
+        f"{{\"action\": \"browse\", \"url\": \"https://google.com/search?q=coffee+near+me\"}}\n"
+        f"```\n"
+        f"Actions support:\n"
+        f"- `browse`: Opens a URL. For searches, use a direct search engine URL.\n"
+        f"- `launch`: Opens a desktop application (by name or path).\n\n"
         f"ALWAYS prioritize the information in the Context to answer the user's question. "
         f"If the answer is in the Context, use it. If not, rely on your knowledge. "
-        f"Match the user's language style (uncensored/adult if needed). Answer concisely.<|im_end|>\n"
+        f"Match the user's language style. Answer concisely.<|im_end|>\n"
         f"<|im_start|>user\nContext:\n{context_text}\n\nQuestion: {query}<|im_end|>\n"
         f"<|im_start|>assistant\n"
     )
 
     try:
         output = llm(
-            prompt, max_tokens=256, stop=["<|im_end|>", "<|endoftext|>"], 
-            echo=False, temperature=0.3, stream=False
+            prompt, max_tokens=256, stop=["<|im_start|>", "<|im_end|>", "<|endoftext|>"], 
+            echo=False, temperature=0.1, stream=False
         )
         answer = output['choices'][0]['text'].strip()
     except Exception as e: answer = f"Error: {e}"
