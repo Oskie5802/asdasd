@@ -90,10 +90,9 @@ let
     }
 
     window#waybar {
-        background: rgba(255, 255, 255, 0.75); /* Glassy white */
+        background: rgba(255, 255, 255, 0.9); /* More solid without blur support */
         color: #1d1d1f;
         border-bottom: 1px solid rgba(0,0,0,0.05);
-        backdrop-filter: blur(20px); /* Strong blur */
     }
 
     #custom-logo {
@@ -182,12 +181,11 @@ let
       font-family: "SF Pro Display", "Manrope", sans-serif; 
     }
     .control-center {
-      background: rgba(255, 255, 255, 0.85); /* Glassy white */
+      background: rgba(255, 255, 255, 0.95);
       border: 1px solid rgba(255, 255, 255, 0.5);
       border-radius: 20px;
       box-shadow: 0 10px 40px rgba(0,0,0,0.15);
       padding: 16px;
-      backdrop-filter: blur(30px);
     }
     .widget-title { color: #1d1d1f; margin-bottom: 10px; }
     .widget-title > label { font-weight: 800; font-size: 18px; }
