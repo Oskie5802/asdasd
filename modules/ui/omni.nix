@@ -11,11 +11,13 @@ let
     import os
     import subprocess
     import requests
-    from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QLineEdit, 
+    import threading
+    from urllib.parse import urlparse
+    from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, 
                                  QListWidget, QListWidgetItem, QFrame, QAbstractItemView,
                                  QGraphicsDropShadowEffect, QLabel, QScrollArea)
-    from PyQt6.QtCore import Qt, QSize, QThread, pyqtSignal, QPropertyAnimation, QEasingCurve, QPoint, QRect, QEvent
-    from PyQt6.QtGui import QColor, QFont, QIcon
+    from PyQt6.QtCore import Qt, QSize, QThread, pyqtSignal, QPropertyAnimation, QEasingCurve, QPoint, QRect, QEvent, QTimer
+    from PyQt6.QtGui import QColor, QFont, QIcon, QPixmap, QPainter, QPainterPath, QBrush
     import traceback
     import json
     import re
@@ -150,7 +152,230 @@ let
             except:
                 self.results_found.emit([], self.query)
 
+    class LinkActionWidget(QWidget):
+        icon_downloaded = pyqtSignal(object) # Use object for safer passing of bytes
+
+        def __init__(self, title, url, description, parent=None):
+            super().__init__(parent)
+            self.url = url
+            self.icon_thread = None # Keep reference
+            
+            # Connect signal
+            self.icon_downloaded.connect(self.update_icon)
+            
+            # Layout
+            layout = QVBoxLayout(self)
+            layout.setContentsMargins(16, 16, 16, 16)
+            layout.setSpacing(6)
+            
+            # 1. Top Row: Icon + Action Text
+            top_row = QWidget()
+            top_layout = QHBoxLayout(top_row)
+            top_layout.setContentsMargins(0, 0, 0, 0)
+            top_layout.setSpacing(10)
+            
+            # Icon Label
+            self.icon_label = QLabel("🌐") 
+            self.icon_label.setFixedSize(16, 16)
+            self.icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.icon_label.setStyleSheet("color: #007AFF; font-size: 12px;")
+            
+            # Action Label ("Open Link")
+            self.action_label = QLabel(f"Open {url}")
+            self.action_label.setStyleSheet("color: #007AFF; font-size: 13px; font-weight: 600;")
+            
+            top_layout.addWidget(self.icon_label)
+            top_layout.addWidget(self.action_label)
+            top_layout.addStretch() 
+            
+            # Main Title
+            self.title_label = QLabel(title)
+            self.title_label.setWordWrap(True)
+            self.title_label.setStyleSheet("color: #1d1d1f; font-size: 16px; font-weight: 700;")
+            
+            # Description
+            self.desc_label = QLabel(description)
+            self.desc_label.setWordWrap(True)
+            self.desc_label.setStyleSheet("color: #8E8E93; font-size: 13px; font-weight: 400;")
+            
+            layout.addWidget(top_row)
+            layout.addWidget(self.title_label)
+            layout.addWidget(self.desc_label)
+            
+            self.fetch_icon()
+
+        def fetch_icon(self):
+            try:
+                # print(f"DEBUG: Fetching icon for URL: {self.url}")
+                if not self.url: return
+                
+                # 1. Clean URL
+                clean_url = self.url.strip().strip('<>').strip('"').strip("'")
+                
+                # 2. Add schema if missing for parsing
+                if not clean_url.startswith("http") and not clean_url.startswith("//"):
+                    clean_url = "https://" + clean_url
+                    
+                parsed = urlparse(clean_url)
+                domain = parsed.netloc
+                
+                # Fallback for simple strings like "google.com" passed through logic
+                if not domain and parsed.path:
+                    possible = parsed.path.split('/')[0]
+                    if '.' in possible: domain = possible
+
+                if not domain: return
+
+                # Normalize domain (strip www.) for better favicon hit rate
+                if domain.startswith("www."):
+                    domain = domain[4:]
+                
+                # 3. Fetch
+                icon_url = f"https://www.google.com/s2/favicons?domain={domain}&sz=64"
+                
+                self.icon_thread = threading.Thread(target=self._download_icon, args=(icon_url,), daemon=True)
+                self.icon_thread.start()
+            except Exception as e:
+                print(f"Error starting icon thread: {e}")
+
+        def _download_icon(self, url):
+            try:
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                }
+                r = requests.get(url, headers=headers, timeout=3)
+                if r.status_code == 200:
+                    self.icon_downloaded.emit(r.content)
+            except: pass
+
+        def update_icon(self, data):
+            try:
+                pixmap = QPixmap()
+                pixmap.loadFromData(data)
+                if not pixmap.isNull():
+                    self.icon_label.setText("") 
+                    self.icon_label.setPixmap(pixmap.scaled(16, 16, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+            except: pass
+
+        def sizeHint(self):
+            w = 520 
+            header_h = 32
+            title_h = self.title_label.heightForWidth(w)
+            desc_h = self.desc_label.heightForWidth(w)
+            h = 32 + 12 + header_h + title_h + desc_h + 20 
+            return QSize(600, h)
+
+    class PersonActionWidget(QWidget):
+        image_downloaded = pyqtSignal(object)
+
+        def __init__(self, name, description, image_url, url, parent=None):
+            super().__init__(parent)
+            self.image_url = image_url
+            self.url = url
+            
+            self.image_downloaded.connect(self.update_image)
+            
+            # Layout
+            layout = QHBoxLayout(self)
+            layout.setContentsMargins(20, 20, 20, 20)
+            layout.setSpacing(20)
+            
+            # 1. Avatar (Left)
+            self.avatar = QLabel()
+            self.avatar.setFixedSize(80, 80)
+            self.avatar.setStyleSheet("background-color: #E5E5EA; border-radius: 40px; border: 1px solid rgba(0,0,0,0.1);")
+            self.avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            
+            # 2. Info (Right)
+            info_layout = QVBoxLayout()
+            info_layout.setSpacing(4)
+            
+            name_label = QLabel(name)
+            name_label.setStyleSheet("font-size: 20px; font-weight: 700; color: #1d1d1f;")
+            name_label.setWordWrap(True)
+            
+            desc_label = QLabel(description)
+            desc_label.setStyleSheet("font-size: 14px; font-weight: 400; color: #636366; line-height: 1.4;")
+            desc_label.setWordWrap(True)
+            desc_label.setMaximumHeight(60) # Limit height
+            
+            # Small link indicator
+            link_label = QLabel(f"Source: {urlparse(url).netloc}" if url else "Unknown Source")
+            link_label.setStyleSheet("font-size: 11px; font-weight: 600; color: #007AFF; margin-top: 4px;")
+
+            info_layout.addWidget(name_label)
+            info_layout.addWidget(desc_label)
+            info_layout.addWidget(link_label)
+            info_layout.addStretch()
+            
+            layout.addWidget(self.avatar)
+            layout.addLayout(info_layout)
+            
+            if self.image_url:
+                threading.Thread(target=self._download_image, daemon=True).start()
+            else:
+                 self.avatar.setText(name[0])
+                 self.avatar.setStyleSheet("background-color: #007AFF; color: white; font-size: 32px; font-weight: bold; border-radius: 40px;")
+
+        def _download_image(self):
+            try:
+                headers = {"User-Agent": "Mozilla/5.0"}
+                r = requests.get(self.image_url, headers=headers, timeout=5)
+                if r.status_code == 200:
+                    self.image_downloaded.emit(r.content)
+            except: pass
+
+        def update_image(self, data):
+            try:
+                pixmap = QPixmap()
+                pixmap.loadFromData(data)
+                if not pixmap.isNull():
+                    # Circular Crop
+                    size = 80
+                    rounded = QPixmap(size, size)
+                    rounded.fill(Qt.GlobalColor.transparent)
+                    
+                    painter = QPainter(rounded)
+                    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                    path = QPainterPath()
+                    path.addEllipse(0, 0, size, size)
+                    painter.setClipPath(path)
+                    
+                    # Scale keeping aspect ratio to fill
+                    scaled = pixmap.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+                    
+                    # Center crop
+                    x = (scaled.width() - size) // 2
+                    y = (scaled.height() - size) // 2
+                    painter.drawPixmap(0, 0, scaled, -x, -y)
+                    painter.end()
+                    
+                    self.avatar.setPixmap(rounded)
+                    self.avatar.setStyleSheet("background-color: transparent;")
+            except: pass
+
+        def sizeHint(self):
+            return QSize(600, 120)
+
+    class ActionWorker(QThread):
+        action_found = pyqtSignal(object, str) # action_data (dict), query
+
+        def __init__(self, query):
+            super().__init__()
+            self.query = query
+
+        def run(self):
+            try:
+                # Fast Action Inference
+                r = requests.post("http://127.0.0.1:5500/action", json={"query": self.query}, timeout=15)
+                data = r.json()
+                action_data = data.get("action")
+                self.action_found.emit(action_data, self.query)
+            except:
+                self.action_found.emit(None, self.query)
+
     class ThinkingWidget(QWidget):
+    # ... (Keep ThinkingWidget as is, reusing existing code)
         def __init__(self, text, parent=None):
             super().__init__(parent)
             self.full_text = text
@@ -256,6 +481,7 @@ let
                     self.window().adjust_window_height()
 
     class AnswerWidget(QWidget):
+    # ... (Keep AnswerWidget as is, no changes needed)
         def __init__(self, text, parent=None):
             super().__init__(parent)
             self.layout = QVBoxLayout(self)
@@ -270,11 +496,12 @@ let
             self.layout.addWidget(self.label)
             
         def sizeHint(self):
-            # Stable width estimate: Window(720) - Margins(80) - ListPadding(24) - WidgetInternalPadding(30) = 586
-            w = 586
-            # Reinforced buffer for 20pt font ascent/descent + margins
-            # Increasing from +30 to +45 to ensure last line is never cut
-            h = self.label.heightForWidth(w) + 45 
+            # Reduced width estimate to ensure height calculation handles wrapping correctly
+            # Window(720) - Margins(80) - ListPadding(24) - WidgetInternalPadding(30) = 586
+            # We use 550 to be safe (underestimating width -> overestimating height -> no cutoff)
+            w = 550
+            # Increased buffer to 60 to prevent any bottom cutoff
+            h = self.label.heightForWidth(w) + 60
             return QSize(w, h)
 
     class OmniWindow(QWidget):
@@ -350,6 +577,14 @@ let
 
             # Search Worker
             self.search_worker = None
+            # Action Worker
+            self.action_worker = None
+            
+            # Debounce Timer
+            self.debounce_timer = QTimer()
+            self.debounce_timer.setSingleShot(True)
+            self.debounce_timer.setInterval(400) # 400ms delay
+            self.debounce_timer.timeout.connect(self.trigger_async_searches)
 
         def adjust_window_height(self):
             # 1. Precise Item Summation
@@ -428,9 +663,85 @@ let
                 self.list_widget.addItem(item)
                 added_count += 1
             
-            if added_count > 0:
                 self.list_widget.scrollToBottom()
                 self.adjust_window_height()
+
+        def handle_action_result(self, action_data, query):
+            # Check if input matches
+            if self.input_field.text() != query: return
+            if not action_data: return
+            
+            # Check if we already have an action item at top
+            first_item = self.list_widget.item(0)
+            if first_item and first_item.data(Qt.ItemDataRole.UserRole).get('type') == 'fast_action':
+                # Update existing? For now, easier to remove and re-add to handle widget reset
+                self.list_widget.takeItem(0)
+            
+            # Insert at top
+            item = QListWidgetItem()
+            
+            # --- RICH UI ---
+            if isinstance(action_data, dict) and action_data.get('type') == 'link':
+                # Rich Link Card
+                widget = LinkActionWidget(
+                    title=action_data.get('title', 'Link'),
+                    url=action_data.get('url', ' '.strip()),
+                    description=action_data.get('description', ' '.strip())
+                )
+                item.setSizeHint(widget.sizeHint()) # Dynamic height
+                item.setData(Qt.ItemDataRole.UserRole, {"type": "fast_action", "action_data": action_data})
+                self.list_widget.insertItem(0, item)
+                self.list_widget.setItemWidget(item, widget)
+                
+            elif isinstance(action_data, dict) and action_data.get('type') == 'person':
+                # Person Card
+                widget = PersonActionWidget(
+                    name=action_data.get('name', 'Person'),
+                    description=action_data.get('description', ' '),
+                    image_url=action_data.get('image'),
+                    url=action_data.get('url')
+                )
+                item.setSizeHint(widget.sizeHint())
+                item.setData(Qt.ItemDataRole.UserRole, {"type": "fast_action", "action_data": action_data})
+                self.list_widget.insertItem(0, item)
+                self.list_widget.setItemWidget(item, widget)
+
+            elif isinstance(action_data, dict) and action_data.get('type') == 'status':
+                 # Status Text (Gray)
+                 text = f"⚡ {action_data.get('content')}"
+                 item.setText(text)
+                 item.setForeground(QColor("#8E8E93"))
+                 font = item.font(); font.setItalic(True); item.setFont(font)
+                 item.setData(Qt.ItemDataRole.UserRole, {"type": "fast_action", "action_data": action_data})
+                 self.list_widget.insertItem(0, item)
+
+            elif isinstance(action_data, dict) and action_data.get('type') == 'calc':
+                 # Calculator
+                 val = action_data.get('content')
+                 item.setText(f"  {val}")
+                 item.setIcon(QIcon.fromTheme("accessories-calculator"))
+                 item.setForeground(QColor("#AF52DE"))
+                 font = item.font(); font.setBold(True); font.setPointSize(22); item.setFont(font)
+                 item.setData(Qt.ItemDataRole.UserRole, {"type": "fast_action", "action_data": action_data})
+                 self.list_widget.insertItem(0, item)
+                 
+            else:
+                # Fallback / Command
+                # Support old string format just in case
+                if isinstance(action_data, str):
+                     text = action_data
+                else:
+                     text = action_data.get('content', str(action_data))
+                     
+                item.setText(f"⚡ {text}")
+                item.setForeground(QColor("#007AFF"))
+                font = item.font(); font.setBold(True); item.setFont(font)
+                item.setData(Qt.ItemDataRole.UserRole, {"type": "fast_action", "action_data": action_data})
+                self.list_widget.insertItem(0, item)
+            
+            self.list_widget.setCurrentRow(0)
+            self.adjust_window_height()
+
 
         def center(self):
             qr = self.frameGeometry()
@@ -595,15 +906,31 @@ let
             self.list_widget.setCurrentRow(0)
             self.adjust_window_height()
 
-            # 4. Trigger Semantic Search (Async)
-            if len(query) > 1:
-                if self.search_worker and self.search_worker.isRunning():
-                    self.search_worker.terminate()
-                    self.search_worker.wait()
-                
-                self.search_worker = SearchWorker(query)
-                self.search_worker.results_found.connect(self.handle_semantic_results)
-                self.search_worker.start()
+            self.list_widget.setCurrentRow(0)
+            self.adjust_window_height()
+
+            # 4. Debounce Async Search
+            if len(query) >= 1:
+                self.debounce_timer.start()
+
+        def trigger_async_searches(self):
+            query = self.input_field.text()
+            if len(query) < 1: return
+
+            # Trigger Semantic Search
+            if self.search_worker and self.search_worker.isRunning():
+                 # Let it finish or ignore, we will spawn new one
+                 pass
+            self.search_worker = SearchWorker(query)
+            self.search_worker.results_found.connect(self.handle_semantic_results)
+            self.search_worker.start()
+
+            # Trigger Fast Action
+            if self.action_worker and self.action_worker.isRunning():
+                 pass
+            self.action_worker = ActionWorker(query)
+            self.action_worker.action_found.connect(self.handle_action_result)
+            self.action_worker.start()
 
         def on_entered(self):
             if self.list_widget.currentRow() < 0: return
@@ -619,12 +946,42 @@ let
             elif data['type'] == 'app':
                 subprocess.Popen(["dex", data['path']], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 self.close()
-
                 
             elif data['type'] == 'file':
                 # Open files/folders with xdg-open
                 subprocess.Popen(["xdg-open", data['path']], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 self.close()
+
+            elif data['type'] == 'fast_action':
+                action_data = data['action_data']
+                
+                # Handle Dict format
+                if isinstance(action_data, dict):
+                    if action_data.get('type') == 'link':
+                        url = action_data.get('url')
+                        subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        self.close()
+                    elif action_data.get('type') == 'calc':
+                        val = action_data.get('content')
+                        subprocess.run(["xclip", "-selection", "clipboard"], input=val.encode(), stderr=subprocess.DEVNULL)
+                        self.close()
+                    elif action_data.get('type') == 'status':
+                        pass
+                    else:
+                        # Command?
+                        content = action_data.get('content', ' '.strip())
+                        subprocess.run(["xclip", "-selection", "clipboard"], input=content.encode(), stderr=subprocess.DEVNULL)
+                        self.close()
+                else:
+                    # Old String Fallback (shouldn't happen with new brain.nix but safe to keep)
+                    action_text = str(action_data)
+                    if action_text.startswith("Open http"):
+                        url = action_text.replace("Open ", "").strip()
+                        subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        self.close()
+                    else:
+                         subprocess.run(["xclip", "-selection", "clipboard"], input=action_text.encode(), stderr=subprocess.DEVNULL)
+                         self.close()
 
         def start_ai_inference(self, query):
             self.list_widget.clear()

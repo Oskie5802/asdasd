@@ -4,7 +4,7 @@ let
   # Zakładamy, że masz plik bg.png w folderze assets obok folderu modules
   # Struktura: /twoj-projekt/assets/bg.png
   # Dostosuj ścieżkę ../../../assets/bg.png zależnie od tego gdzie leży ten plik względem theme.nix
-  wallPath = ../../assets/bg.png; 
+  wallPath = ../../assets/wallpaper.png; 
 in
 {
   # 1. Kopiowanie tapety do systemu
