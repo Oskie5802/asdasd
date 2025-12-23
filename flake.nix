@@ -45,6 +45,10 @@
         format = "install-iso";
         modules = [
           ./configuration.nix
+          ( { lib, ... }: {
+             image.fileName = lib.mkForce "omnios.iso";
+             isoImage.volumeID = lib.mkForce "OMNIOS_25_12";
+          })
         ];
       };
     };

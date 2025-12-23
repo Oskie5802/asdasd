@@ -20,14 +20,36 @@ let
 
   # --- PYTHON ENVIRONMENT ---
   brainPython = pkgs.python3.withPackages (
-    ps: with ps; [
+    ps: 
+    let 
+      gpuLlama = ps.llama-cpp-python.overridePythonAttrs (old: {
+        # FORCE RECOMPILE WITH VULKAN
+        CMAKE_ARGS = "-DGGML_VULKAN=on";
+        
+        nativeBuildInputs = (old.nativeBuildInputs or []) ++ [ 
+          pkgs.cmake 
+          pkgs.ninja 
+          pkgs.pkg-config 
+          pkgs.shaderc # <--- Moved here because we need the 'glslc' binary at build time
+        ];
+        
+        buildInputs = (old.buildInputs or []) ++ [ 
+          pkgs.vulkan-headers 
+          pkgs.vulkan-loader 
+        ];
+        
+        # Ensure we don't prefer prebuilt wheels
+        # format = "setuptools"; <--- Removed to fix assertion error (upstream uses pyproject now)
+      });
+    in
+    with ps; [
       lancedb
       sentence-transformers
       numpy
       pandas
       flask
       gunicorn
-      llama-cpp-python
+      gpuLlama # <--- USING THE CUSTOM GPU BUILD
       requests
       simpleeval
       transformers
@@ -48,8 +70,11 @@ let
   brainWrapper = pkgs.writeShellScriptBin "start-brain-safe" ''
 
 
+    # Ensure Vulkan Loader is visible to the process
+    export LD_LIBRARY_PATH="${pkgs.vulkan-loader}/lib:$LD_LIBRARY_PATH"
+
     export MODEL_FILENAME="${modelName}"
-    export N_GPU_LAYERS="${if builtins.getEnv "N_GPU_LAYERS" != "" then builtins.getEnv "N_GPU_LAYERS" else "0"}"
+    export N_GPU_LAYERS="''${N_GPU_LAYERS:-99}"
     mkdir -p "$HOME/.local/share/ai-models"
     DEST="$HOME/.local/share/ai-models/${modelName}"
 
