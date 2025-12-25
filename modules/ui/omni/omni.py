@@ -6,13 +6,14 @@ import threading
 from urllib.parse import urlparse
 from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, 
                              QListWidget, QListWidgetItem, QFrame, QAbstractItemView,
-                             QGraphicsDropShadowEffect, QLabel, QScrollArea)
+                             QGraphicsDropShadowEffect, QLabel, QScrollArea, QProgressBar)
 from PyQt6.QtCore import Qt, QSize, QThread, pyqtSignal, QPropertyAnimation, QEasingCurve, QPoint, QRect, QEvent, QTimer
 from PyQt6.QtGui import QColor, QFont, QIcon, QPixmap, QPainter, QPainterPath, QBrush
 import traceback
 import json
 import re
 import logging
+import random
 
 # --- LOGGING SETUP ---
 logging.basicConfig(
@@ -191,6 +192,73 @@ class LinkActionWidget(QWidget):
         desc_h = self.desc_label.heightForWidth(w)
         h = 32 + 12 + header_h + title_h + desc_h + 20 
         return QSize(600, h)
+
+class InstallActionWidget(LinkActionWidget):
+    def __init__(self, name, website_url, parent=None):
+        # Use website URL for icon fetching, or fallback
+        url_for_icon = website_url if website_url else f"https://google.com/search?q={name}"
+        
+        super().__init__(f"Install {name}", url_for_icon, "Click to search in NixOS packages", parent)
+        
+        # Override Styling for Install context
+        # We will use a nested layout inside the action_label placeholder to ensure perfect alignment
+        self.action_label.setText("")
+        self.action_label.setStyleSheet("background: transparent;")
+        
+        # Create a layout for the "action_label" container
+        # Note: We are hijacking action_label as a container widget
+        layout = QHBoxLayout(self.action_label)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        
+        # --- Helper for Key Badge ---
+        def create_key(text):
+            lbl = QLabel(text)
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl.setStyleSheet("""
+                background-color: #FFFFFF;
+                border: 1px solid #D1D1D6;
+                border-bottom: 2px solid #C7C7CC;
+                border-radius: 5px;
+                color: #1d1d1f;
+                padding: 3px 6px;
+                font-family: "Manrope";
+                font-size: 10px;
+                font-weight: 800;
+            """)
+            return lbl
+
+        # [TAB]
+        layout.addWidget(create_key("TAB"))
+        
+        # "Install"
+        lbl_install = QLabel("Install")
+        lbl_install.setStyleSheet("color: #34C759; font-weight: 700; font-size: 13px; font-family: 'Manrope';")
+        layout.addWidget(lbl_install)
+        
+        # Spacer
+        layout.addSpacing(12)
+        
+        # [ENTER]
+        layout.addWidget(create_key("ENTER"))
+        
+        # "Website"
+        lbl_web = QLabel("Website")
+        lbl_web.setStyleSheet("color: #8E8E93; font-weight: 600; font-size: 13px; font-family: 'Manrope';")
+        layout.addWidget(lbl_web)
+        
+        layout.addStretch() # Push left
+        
+        self.icon_label.setText("⬇")
+        self.icon_label.setStyleSheet("color: #34C759; font-size: 14px;")
+        
+        # Specific overrides
+        self.title_label.setStyleSheet("color: #1d1d1f; font-size: 18px; font-weight: 700;")
+        self.desc_label.setText("Available in NixOS Unstable Channel")
+        self.desc_label.setStyleSheet("color: #8E8E93; font-size: 13px;")
+
+    # Removed sizeHint override since we removed the bottom row
+
 
 class PersonActionWidget(QWidget):
     image_downloaded = pyqtSignal(object)
@@ -383,6 +451,55 @@ class ActionWorker(QThread):
             self.action_found.emit(actions, self.query)
         except:
             self.action_found.emit([], self.query)
+
+            self.action_found.emit([], self.query)
+
+class InstallWorker(QThread):
+    progress_update = pyqtSignal(str) # Status text
+    finished = pyqtSignal(bool, str) # Success, Message
+
+    def __init__(self, app_name):
+        super().__init__()
+        self.app_name = app_name
+
+    def run(self):
+        try:
+            # 1. Get Plan
+            self.progress_update.emit(f"Checking NixOS Packages for '{self.app_name}'...")
+            r = requests.post(f"{BRAIN_URL.replace('/ask', '')}/install_plan", json={"app_name": self.app_name}, timeout=30)
+            if r.status_code != 200:
+                self.finished.emit(False, "Brain connection failed.")
+                return
+            
+            plan = r.json()
+            method = plan.get("method")
+            desc = plan.get("description", "Installing...")
+            commands = plan.get("commands", [])
+            
+            if method == "failed" or not commands:
+                self.finished.emit(False, "Could not find a way to install this app.")
+                return
+
+            self.progress_update.emit(f"{desc}...")
+            
+            # 2. Execute Commands
+            # 2. Execute Commands
+            for cmd in commands:
+                self.progress_update.emit("Installing...")
+                print(f"DEBUG: Executing command: '{cmd}'")
+                logging.info(f"DEBUG: Executing command: '{cmd}'")
+                # Run command (blocking)
+                # We use shell=True for complex commands (pipes/env), but be careful. 
+                # Ideally we'd use list args, but the brain returns strings.
+                res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+                if res.returncode != 0:
+                     self.finished.emit(False, f"Command failed: {cmd}\n{res.stderr}")
+                     return
+            
+            self.finished.emit(True, f"Successfully installed {self.app_name}!")
+            
+        except Exception as e:
+            self.finished.emit(False, f"Installation Error: {str(e)}")
 
 class ThinkingWidget(QWidget):
     def __init__(self, text, parent=None):
@@ -623,8 +740,8 @@ class OmniWindow(QWidget):
         screen_h = screen_geo.height()
         screen_center_y = screen_geo.center().y()
         
-        # Ultra Compact Max: 540px
-        target_h = min(target_h, 540)
+        # Ultra Compact Max: 800px (Increased from 540 to allow full content)
+        target_h = min(target_h, 800)
         
         if self.list_widget.count() == 0:
             target_h = 160 # Search-bar only
@@ -755,6 +872,26 @@ class OmniWindow(QWidget):
                     font = item.font(); font.setBold(True); font.setPointSize(22); item.setFont(font)
                     item.setData(Qt.ItemDataRole.UserRole, {"type": "fast_action", "action_data": action_data})
                     self.list_widget.insertItem(0, item)
+
+            elif isinstance(action_data, dict) and action_data.get('type') == 'install':
+                    # INSTALL ACTION
+                    app_name = action_data.get('name')
+                    website = action_data.get('website')
+                    
+                    # 1. Check if ANY installed app matches loosely
+                    is_installed = False
+                    for app in self.apps:
+                        if app_name.lower() in app['name'].lower():
+                            is_installed = True
+                            break
+                    
+                    if not is_installed:
+                        # Show Install Action Card
+                        widget = InstallActionWidget(app_name, website)
+                        item.setSizeHint(widget.sizeHint())
+                        item.setData(Qt.ItemDataRole.UserRole, {"type": "fast_action", "action_data": action_data})
+                        self.list_widget.insertItem(0, item)
+                        self.list_widget.setItemWidget(item, widget)
                     
             else:
                 # Fallback / Command
@@ -860,7 +997,158 @@ class OmniWindow(QWidget):
                 if current > 0:
                     self.list_widget.setCurrentRow(current - 1)
                 return True
+            elif key == Qt.Key.Key_Tab:
+                # TAB KEY handling for Actions
+                item = self.list_widget.currentItem()
+                if item:
+                    data = item.data(Qt.ItemDataRole.UserRole)
+                    if data and isinstance(data, dict):
+                         # Logic for Install Action -> TAB = Install (NixOS Search)
+                         if data.get('type') == 'fast_action':
+                             action_data = data.get('action_data')
+                             if action_data and action_data.get('type') == 'install':
+                                 name = action_data.get('name')
+                                 # TRIGGER AUTONOMOUS INSTALL
+                                 self.start_autonomous_install(name)
+                                 return True
         return super().eventFilter(obj, event)
+
+    def start_autonomous_install(self, app_name):
+        # 1. Update UI to "Installing" mode
+        self.list_widget.clear()
+        
+        # Block signals...
+        self.input_field.blockSignals(True)
+        self.input_field.setDisabled(True)
+        self.input_field.setText(f"Installing {app_name}...")
+        self.input_field.blockSignals(False)
+        
+        # STATUS ITEM
+        item = QListWidgetItem(f"Initializing...")
+        item.setFont(QFont("Manrope", 16, QFont.Weight.Medium))
+        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+        # CRITICAL: Set explicit size hint so adjust_window_height works correctly
+        item.setSizeHint(QSize(600, 40)) 
+        self.list_widget.addItem(item)
+        self.install_status_item = item
+        
+        # PROGRESS BAR ITEM
+        pbar_item = QListWidgetItem(self.list_widget)
+        pbar_item.setFlags(pbar_item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+        
+        self.install_pbar = QProgressBar()
+        self.install_pbar.setRange(0, 1000) # Use 0-1000 for smoother sub-percentage feel
+        self.install_pbar.setValue(0)
+        self.install_pbar.setTextVisible(True)
+        self.install_pbar.setFormat("%p%") # Show percentage
+        self.install_pbar.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.install_pbar.setFixedHeight(24) 
+        
+        self.install_pbar.setStyleSheet("""
+            QProgressBar {
+                border: none;
+                background-color: rgba(0, 0, 0, 0.05);
+                border-radius: 12px;
+                text-align: center;
+                color: rgba(60, 60, 67, 0.6);
+                font-family: "Manrope";
+                font-weight: 700;
+                font-size: 12px;
+                margin-left: 40px;
+                margin-right: 40px;
+            }
+            QProgressBar::chunk {
+                background-color: #007AFF;
+                border-radius: 12px;
+            }
+        """)
+        
+        # Give it plenty of vertical space (Separation)
+        pbar_item.setSizeHint(QSize(600, 60)) 
+        self.list_widget.setItemWidget(pbar_item, self.install_pbar)
+        
+        self.adjust_window_height()
+        
+        # Fake Progress Logic
+        self.install_progress_val = 0.0
+        self.install_timer = QTimer()
+        self.install_timer.setInterval(20) # 20ms = 50fps for smoothness
+        self.install_timer.timeout.connect(self.update_fake_progress)
+        self.install_timer.start()
+        
+        # 2. Start Worker
+        self.install_worker = InstallWorker(app_name)
+        self.install_worker.progress_update.connect(self.update_install_status)
+        self.install_worker.finished.connect(self.finish_install)
+        self.install_worker.start()
+
+    def update_fake_progress(self):
+        # Smooth, Random, Non-Linear Progress Logic
+        
+        current = self.install_progress_val
+        increment = 0.0
+        
+        # Phase 1: Rapid ramp up to 30% (Initiating)
+        if current < 30:
+            increment = random.uniform(0.5, 1.5)
+            
+        # Phase 2: Steady but fast to 60% (Downloading)
+        elif current < 60:
+            increment = random.uniform(0.1, 0.4)
+            # Occasional small stutter to feel "real"
+            if random.random() < 0.1: increment = 0
+            
+        # Phase 3: Slower traverse to 85% (Installing/Building)
+        elif current < 85:
+            increment = random.uniform(0.01, 0.15)
+            
+        # Phase 4: The final crawl (Linking/Verifying) - Asymptotic to 99%
+        elif current < 99:
+             increment = random.uniform(0.001, 0.02)
+             
+        self.install_progress_val += increment
+        if self.install_progress_val > 99: self.install_progress_val = 99
+        
+        # Map 0-100 float to 0-1000 int for smoother bar animation
+        self.install_pbar.setValue(int(self.install_progress_val * 10))
+
+    def update_install_status(self, status):
+        if self.install_status_item:
+            self.install_status_item.setText(status)
+            
+    def finish_install(self, success, message):
+        if hasattr(self, 'install_timer'):
+            self.install_timer.stop()
+            
+        self.list_widget.clear()
+        
+        # Use AnswerWidget to ensure proper height calculation for long error messages
+        aw = AnswerWidget(message)
+        # Apply specific styling to the internal label based on success/error
+        if success:
+             aw.label.setStyleSheet("color: #34C759; line-height: 1.3;") # Green
+        else:
+             aw.label.setStyleSheet("color: #FF3B30; line-height: 1.3;") # Red
+             
+        item = QListWidgetItem(self.list_widget)
+        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+        item.setSizeHint(aw.sizeHint())
+        self.list_widget.setItemWidget(item, aw)
+        
+        # Block signals to prevent reset
+        self.input_field.blockSignals(True)
+        self.input_field.setDisabled(False)
+        self.input_field.setText("")
+        self.input_field.setFocus()
+        self.input_field.blockSignals(False)
+        
+        self.adjust_window_height()
+        
+        # Keep window open for feedback
+        if success:
+            # Refresh app list so the new app is findable
+            self.apps = self.load_apps()
 
     def load_apps(self):
         apps = []
@@ -1051,6 +1339,19 @@ class OmniWindow(QWidget):
                 elif action_data.get('type') == 'calc':
                     val = action_data.get('content')
                     subprocess.run(["xclip", "-selection", "clipboard"], input=val.encode(), stderr=subprocess.DEVNULL)
+                    self.close()
+                elif action_data.get('type') == 'install':
+                    # ENTER KEY = Open Website
+                    website = action_data.get('website')
+                    name = action_data.get('name')
+                    
+                    if website:
+                         subprocess.Popen(["xdg-open", website], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    else:
+                         # Fallback to search if no website found
+                         url = f"https://www.google.com/search?q={name}"
+                         subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    
                     self.close()
                 elif action_data.get('type') == 'status':
                     pass

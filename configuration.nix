@@ -9,7 +9,6 @@
   imports = [
     ./modules/qemu/qemu_fix.nix
     ./modules/qemu/qemu_fix.nix
-    # ./modules/qemu/graphics.nix <- Removed for hardware support (injected via flake for VM)
     ./modules/system/boot.nix
     ./modules/system/user.nix
     ./modules/system/packages.nix

@@ -28,7 +28,7 @@
         limiter = false; # Disable rate limiter
       };
       search = {
-        safe_search = 0; # Moderate
+        safe_search = 0;
         autocomplete = "google";
         formats = [
           "html"
@@ -40,12 +40,12 @@
         {
           name = "duckduckgo";
           engine = "duckduckgo";
-          enabled = true;
+          enabled = false;
         }
         {
           name = "google";
           engine = "google";
-          enabled = false; # Keep enabled, but rely on others if it fails
+          enabled = true;
         }
         {
           name = "bing";
@@ -55,6 +55,16 @@
         {
           name = "qwant";
           engine = "qwant";
+          enabled = false;
+        }
+        {
+          name = "startpage";
+          engine = "startpage";
+          enabled = true;
+        }
+        {
+          name = "brave";
+          engine = "brave";
           enabled = false;
         }
         {

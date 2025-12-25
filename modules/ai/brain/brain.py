@@ -22,6 +22,7 @@ init_error = None
 # Thread Lock
 main_lock = threading.Lock()
 fast_lock = threading.Lock()
+abort_fast_event = threading.Event()
 
 # Fast Action Model (GGUF)
 fast_model = None
@@ -161,6 +162,7 @@ def ensure_main_model():
 def search_api(query, categories='general'):
     try:
         # SearXNG uses 'categories' (comma separated)
+        logging.info(f"Searching SearXNG for: '{query}' (Categories: {categories})")
         params = {
             'q': query, 
             'format': 'json', 
@@ -169,7 +171,11 @@ def search_api(query, categories='general'):
         }
         resp = requests.get(SEARXNG_URL, params=params, timeout=5.0)
         if resp.status_code == 200:
-            return resp.json().get('results', [])
+            results = resp.json().get('results', [])
+            logging.info(f"Search returned {len(results)} results.")
+            for i, res in enumerate(results[:3]):
+                logging.info(f"Result [{i}]: {res.get('title')} - {res.get('url')}")
+            return results
         else:
             logging.warn(f"Search API returned status: {resp.status_code}")
     except Exception as e:
@@ -373,6 +379,9 @@ def perform_calculation(expression):
 
 @app.route('/ask', methods=['POST'])
 def ask():
+    # Signal Fast Model to STOP immediately
+    abort_fast_event.set()
+    
     # Trigger load on first request
     ensure_main_model()
 
@@ -476,7 +485,10 @@ def ask():
     )
 
     try:
-        logging.info("Generating answer...")
+        logging.info("Generating answer with Main Model...")
+        # Clear signal so future fast actions work
+        abort_fast_event.clear()
+        
         with main_lock:
             output = llm(
                 prompt, max_tokens=1024, stop=["<|im_start|>", "<|im_end|>", "<|endoftext|>"], 
@@ -559,6 +571,7 @@ Possible actions (output exactly in this format):
 - PERSON:[Full name] → for famous people (correct spelling even with typos)
 - PLACE:[Proper name with correct capitalization] → for famous places
 - OPEN:https://[full URL] → for website completions
+- INSTALL:[App Name] → for known software/apps (e.g. Steam, Discord, VS Code, Chrome)
 - CALC:[math expression] → for math calculations
 - SEARCH:[exact query] → if none of the above clearly fit / everything else / unknown / obscure / local
 
@@ -597,6 +610,12 @@ SEARCH:asdfgh
 some local
 SEARCH:some local
 
+obs studio
+INSTALL:OBS Studio
+
+steam
+INSTALL:Steam
+
 john cna
 PERSON:John Cena
 
@@ -617,15 +636,26 @@ Current query: "{query}"
     try:
         logging.info(f"LLM Input Messages: {json.dumps(messages)}")
         # Run Inference (Chat Completion)
+        logging.info("Actions: Running Fast Model for inference...")
         with fast_lock:
             # Gemma-2/3 models work best with their chat template
-            output = fast_model.create_chat_completion(
+            # STREAMING for Abort Check
+            stream = fast_model.create_chat_completion(
                 messages=messages,
                 max_tokens=64, # Increased for multi-lines
-                temperature=0.1 # Lower temp for strict format
+                temperature=0.1, # Lower temp for strict format
+                stream=True
             )
+            
+            result_text = ""
+            for chunk in stream:
+                if abort_fast_event.is_set():
+                    logging.warning("Fast Model Action aborted by signal.")
+                    return jsonify({"actions": [], "action": None, "error": "Aborted"})
+                
+                content = chunk['choices'][0]['delta'].get('content', '')
+                result_text += content
         
-        result_text = output['choices'][0]['message']['content'].strip()
         logging.info(f"LLM Raw Output (Pass 1): {result_text}")
         
         # --- RAG LOOP ---
@@ -676,9 +706,16 @@ Now output the action(s) for the original query: "{query}"
                 })
                 
                 with fast_lock:
-                    output = fast_model.create_chat_completion(messages=messages, max_tokens=64, temperature=0.2)
+                    stream_2 = fast_model.create_chat_completion(messages=messages, max_tokens=64, temperature=0.2, stream=True)
+                    
+                    result_text = ""
+                    for chunk in stream_2:
+                        if abort_fast_event.is_set():
+                             logging.warning("Fast Model RAG Aborted.")
+                             return jsonify({"actions": [], "action": None, "error": "Aborted"})
+                        content = chunk['choices'][0]['delta'].get('content', '')
+                        result_text += content
                 
-                result_text = output['choices'][0]['message']['content'].strip()
                 logging.info(f"LLM Raw Output (Pass 2): {result_text}")
             except Exception as e:
                 logging.error(f"RAG Loop Error: {e}")
@@ -760,6 +797,22 @@ Now output the action(s) for the original query: "{query}"
                         "description": "Open in Google Maps"
                     })
 
+            # Case B4: Install Action
+            elif "INSTALL:" in line:
+                app_name = line.split("INSTALL:")[1].strip()
+                # Try to find official website for icon
+                website_url = None
+                nav_res = get_navigation_result(app_name)
+                if nav_res:
+                    website_url = nav_res.get('url')
+
+                actions.append({
+                    "type": "install",
+                    "name": app_name,
+                    "website": website_url,
+                    "content": f"Install {app_name}"
+                })
+
             # Case C: Open URL OR Malformed Open
             elif line.startswith("OPEN:") or line.upper().startswith("OPEN:"):
                 # Handle OPEN:https://...
@@ -786,6 +839,213 @@ Now output the action(s) for the original query: "{query}"
     except Exception as e:
         logging.error(f"Action Inference Error: {e}")
         return jsonify({"actions": [], "action": None, "error": str(e)})
+
+@app.route('/install_plan', methods=['POST'])
+def install_plan_endpoint():
+    try: req = request.get_json(force=True)
+    except: return jsonify({"error": "Bad JSON"}), 400
+    
+    app_name = req.get('app_name', '').strip()
+    if not app_name: return jsonify({"error": "No app name"}), 400
+    
+    logging.info(f"Generating Install Plan for: {app_name}")
+    
+    # 1. CHECK NIX PACKAGES (Direct Scrape & LLM Validated)
+    try:
+        logging.info("Scraping search.nixos.org...")
+        ensure_fast_model()
+        
+        # Use NixOS Search API
+        import base64
+        
+        # Internal configuration for NixOS Search API
+        ES_URL = "https://search.nixos.org/backend"
+        ES_USER = "aWVSALXpZv" # Extracted from bundle.js
+        ES_PASS = "X8gPHnzL52wFEekuxsfQ9cSh" # Extracted from bundle.js
+        ES_VERSION = "44" # elasticsearchMappingSchemaVersion from bundle.js
+        CHANNEL = "unstable" # Default to unstable for widest package availability
+        
+        # Construct Index Name and Auth Header
+        index_name = f"latest-{ES_VERSION}-nixos-{CHANNEL}"
+        api_url = f"{ES_URL}/{index_name}/_search"
+        
+        auth_str = f"{ES_USER}:{ES_PASS}"
+        auth_bytes = auth_str.encode('ascii')
+        base64_bytes = base64.b64encode(auth_bytes)
+        base64_auth = base64_bytes.decode('ascii')
+        
+        api_headers = {
+            "Authorization": f"Basic {base64_auth}",
+            "Content-Type": "application/json",
+             "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36"
+        }
+        
+        # Construct Query
+        # Matching against package_attr_name is usually best for "install steam" type queries
+        # Enhanced Query Logic: Try generic match AND specific attribute match with dashes
+        normalized_name = app_name.lower().replace(" ", "-")
+
+        api_query = {
+            "size": 20,
+            "query": {
+                "bool": {
+                    "must": [
+                        {
+                            "bool": {
+                                "should": [
+                                    {
+                                        "multi_match": {
+                                            "query": app_name.lower(),
+                                            "fields": [
+                                                "package_attr_name^9",
+                                                "package_pname^6",
+                                                "package_programs^9",
+                                                "package_description^1.3",
+                                                "package_longDescription^1",
+                                                "flake_name^0.5"
+                                            ],
+                                            "type": "cross_fields",
+                                            "operator": "and"
+                                        }
+                                    },
+                                    {
+                                        "multi_match": {
+                                            "query": normalized_name,
+                                            "fields": [
+                                                "package_attr_name^10", # Higher boost for normalized match
+                                                "package_pname^6"
+                                            ],
+                                            "type": "best_fields"
+                                        }
+                                    }
+                                ],
+                                "minimum_should_match": 1
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+
+        try:
+            logging.info(f"Querying NixOS Search API: {api_url}")
+            resp = requests.post(api_url, headers=api_headers, json=api_query, timeout=10.0)
+            
+            candidates = []
+            if resp.status_code == 200:
+                hits = resp.json().get('hits', {}).get('hits', [])
+                for hit in hits:
+                     source = hit.get('_source', {})
+                     name = source.get('package_attr_name')
+                     desc = source.get('package_description', 'No description')
+                     if name:
+                         candidates.append(f"{name}: {desc}")
+            else:
+                logging.error(f"NixOS Search API failed with status {resp.status_code}: {resp.text}")
+                
+        except Exception as e:
+            logging.error(f"Failed to query NixOS Search API: {e}")
+            candidates = []
+            
+        logging.info(f"Nix Candidates Found: {candidates}")
+        
+        if candidates and fast_model:
+            cand_str = "\n".join(candidates)
+            llm_prompt = f"""User wants to install: '{app_name}'
+Candidates found in Nixpkgs:
+{cand_str}
+
+Instructions:
+1. Identify which of the above candidates is the exact software the user wants.
+2. If there is a perfect or very high confidence match, return ONLY the package name.
+3. If none match well (e.g. user wants 'chrome' but only 'chromedriver' exists), return 'NONE'.
+4. Prefer the main package (e.g. 'steam') over tools/libraries (e.g. 'steam-run', 'steam-tui').
+
+Output ONLY the package name or NONE."""
+
+            logging.info("Asking LLM to select package...")
+            
+            # Call Fast Model
+            output = fast_model.create_chat_completion(
+                messages=[
+                    {"role": "system", "content": "You are a package manager assistant. Output only the package name or NONE."},
+                    {"role": "user", "content": llm_prompt}
+                ],
+                max_tokens=10,
+                temperature=0.0
+            )
+            
+            choice = output['choices'][0]['message']['content'].strip()
+            logging.info(f"LLM Selection: {choice}")
+            
+            if choice and choice != "NONE" and choice in [c.split(':')[0] for c in candidates]:
+                    return jsonify({
+                    "method": "nix",
+                    "description": f"Found '{choice}' in Nixpkgs",
+                    "commands": [
+                        f"NIXPKGS_ALLOW_UNFREE=1 nix --extra-experimental-features 'nix-command flakes' profile install --impure --refresh github:NixOS/nixpkgs/nixos-unstable#{choice}"
+                    ]
+                })
+            
+    except Exception as e:
+        logging.error(f"Nix check failed: {e}")
+        
+    # 2. WEB DOWNLOAD FALLBACK (AppImage / Tarball)
+    logging.info("Falling back to Web Download strategy...")
+    download_q = f"download {app_name} linux AppImage"
+    
+    # Get Search Results
+    web_res = search_api(download_q)
+    context = "\n".join([f"- {r['title']}: {r['url']} ({r.get('content', '')[:100]})" for r in web_res[:3]])
+    
+    # Ask LLM to extract a download link
+    prompt = f"""Task: Find a direct download link for '{app_name}' (Linux).
+Prefer AppImage, then .tar.gz, then .deb.
+Search Results:
+{context}
+
+Return ONLY a JSON object:
+{{
+  "url": "https://...",
+  "filename": "{app_name.lower().replace(' ', '_')}.AppImage",
+  "type": "appimage" (or "other")
+}}
+If no valid link found, return null.
+"""
+    try:
+        ensure_main_model() # Use smart model for this logic
+        with main_lock:
+             # Using completion for simple JSON extraction
+             out = llm(prompt, max_tokens=150, temperature=0.1)
+             txt = out['choices'][0]['text'].strip()
+             # Attempt to parse
+             import re
+             match = re.search(r'(\{.*\})', txt, re.DOTALL)
+             if match:
+                 data = json.loads(match.group(1))
+                 if data and data.get('url'):
+                     url = data['url']
+                     fname = data.get('filename', 'app.AppImage')
+                     
+                     # Check if it's an AppImage
+                     if "AppImage" in fname or url.endswith(".AppImage"):
+                         return jsonify({
+                             "method": "shell",
+                             "description": "Downloading AppImage...",
+                             "commands": [
+                                 f"wget -O ~/Downloads/{fname} {url}",
+                                 f"chmod +x ~/Downloads/{fname}",
+                                 f"echo 'Installed to ~/Downloads/{fname}'"
+                             ]
+                         })
+    except Exception as e:
+        logging.error(f"Web Install Plan failed: {e}")
+
+    return jsonify({
+        "method": "failed", 
+        "description": "Could not determine installation method.",
+        "commands": []
+    })
 
 # --- BACKGROUND LOADER ---
 def _startup_sequence():
